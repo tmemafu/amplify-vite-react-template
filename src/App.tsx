@@ -1,17 +1,25 @@
 import { useEffect, useState } from "react";
 import type { Schema } from "../amplify/data/resource";
-import { useAuthenticator } from '@aws-amplify/ui-react';
 import { generateClient } from "aws-amplify/data";
+import { useAuthenticator } from "@aws-amplify/ui-react"; // ✅ Import this
 
 const client = generateClient<Schema>();
 
+// Define the Todo type based on your schema
+type Todo = {
+  id: string;
+  content: string | null;
+  createdAt: string;
+  updatedAt: string;
+};
+
 function App() {
-  const { signOut } = useAuthenticator();
-  const [todos, setTodos] = useState([]);
+  const [todos, setTodos] = useState<Todo[]>([]); // Explicitly define state type
+  const { signOut } = useAuthenticator(); // Ensure this is imported
 
   useEffect(() => {
     const subscription = client.models.Todo.observeQuery().subscribe({
-      next: (data) => setTodos([...data.items]),
+      next: (data) => setTodos([...data.items] as Todo[]), // Type assertion
     });
 
     return () => subscription.unsubscribe(); // Cleanup on unmount
