@@ -15,7 +15,7 @@ type Todo = {
 
 function App() {
   const [todos, setTodos] = useState<Todo[]>([]); // Explicitly define state type
-  const { signOut } = useAuthenticator(); // Ensure this is imported
+  const {user, signOut } = useAuthenticator(); // Ensure this is imported
 
   useEffect(() => {
     const subscription = client.models.Todo.observeQuery().subscribe({
