@@ -1,63 +1,127 @@
 import { useEffect, useState } from "react";
-import type { Schema } from "../amplify/data/resource";
-import { generateClient } from "aws-amplify/data";
-import { useAuthenticator } from "@aws-amplify/ui-react"; // ✅ Import this
-
-const client = generateClient<Schema>();
-
-// Define the Todo type based on your schema
-type Todo = {
-  id: string;
-  content: string | null;
-  createdAt: string;
-  updatedAt: string;
-};
+import { useAuthenticator } from "@aws-amplify/ui-react";
+import { Storage } from 'aws-amplify';
+import FileTable from './components/FileTable';
+import { UploadedFile } from './types/fileTypes';
 
 function App() {
-  const [todos, setTodos] = useState<Todo[]>([]); // Explicitly define state type
-  const {user, signOut } = useAuthenticator(); // Ensure this is imported
+  const [files, setFiles] = useState<UploadedFile[]>([]);
+  const [isUploading, setIsUploading] = useState(false);
+  const [uploadProgress, setUploadProgress] = useState(0);
+  const { user, signOut } = useAuthenticator();
 
   useEffect(() => {
-    const subscription = client.models.Todo.observeQuery().subscribe({
-      next: (data) => setTodos([...data.items] as Todo[]), // Type assertion
-    });
-
-    return () => subscription.unsubscribe(); // Cleanup on unmount
+    fetchFiles();
   }, []);
 
-  function createTodo() {
-    const content = window.prompt("Todo content");
-    if (content) {
-      client.models.Todo.create({ content });
+  async function fetchFiles() {
+    try {
+      const result = await Storage.list('', { level: 'protected' });
+      const fileList = result.map(item => ({
+        id: item.key!,
+        name: item.key!.split('/').pop() || item.key!,
+        key: item.key!,
+        size: item.size || 0,
+        type: item.contentType || 'unknown',
+        createdAt: item.lastModified?.toISOString() || new Date().toISOString()
+      }));
+      setFiles(fileList);
+    } catch (error) {
+      console.error('Error fetching files:', error);
     }
   }
 
-  function deleteTodo(id: string) {
-    client.models.Todo.delete({ id }).then(() => {
-      setTodos((prevTodos) => prevTodos.filter((todo) => todo.id !== id));
-    });
+  async function handleFileUpload(event: React.ChangeEvent<HTMLInputElement>) {
+    if (!event.target.files?.length) return;
+    
+    const file = event.target.files[0];
+    const fileName = `${user.userId}/${Date.now()}-${file.name}`;
+    
+    setIsUploading(true);
+    setUploadProgress(0);
+    
+    try {
+      await Storage.put(fileName, file, {
+        level: 'protected',
+        contentType: file.type,
+        progressCallback: (progress) => {
+          setUploadProgress(Math.round((progress.loaded / progress.total) * 100));
+        },
+      });
+      
+      setFiles(prev => [...prev, {
+        id: fileName,
+        name: file.name,
+        key: fileName,
+        size: file.size,
+        type: file.type,
+        createdAt: new Date().toISOString()
+      }]);
+    } catch (error) {
+      console.error('Error uploading file:', error);
+    } finally {
+      setIsUploading(false);
+      setUploadProgress(0);
+      event.target.value = ''; // Reset input
+    }
+  }
+
+  async function deleteFile(key: string) {
+    try {
+      await Storage.remove(key, { level: 'protected' });
+      setFiles(prev => prev.filter(file => file.key !== key));
+    } catch (error) {
+      console.error('Error deleting file:', error);
+    }
+  }
+
+  async function getFileUrl(key: string) {
+    try {
+      return await Storage.get(key, { level: 'protected', download: false });
+    } catch (error) {
+      console.error('Error getting file URL:', error);
+      return null;
+    }
   }
 
   return (
-    <main>
-      <h1>My todos</h1>
-      <button onClick={createTodo}>+ new</button>
-      <ul>
-        {todos.map((todo) => (
-          <li key={todo.id} onClick={() => deleteTodo(todo.id)}>
-            {todo.content}
-          </li>
-        ))}
-      </ul>
-      <div>
-        🥳 App successfully hosted. Try creating a new todo.
-        <br />
-        <a href="https://docs.amplify.aws/react/start/quickstart/#make-frontend-updates">
-          Review next step of this tutorial.
-        </a>
+    <div className="app-container">
+      <header className="app-header">
+        <h1>{user?.signInDetails?.loginId}'s File Dashboard</h1>
+        <button className="sign-out-btn" onClick={signOut}>Sign out</button>
+      </header>
+      
+      <div className={`upload-area ${isUploading ? 'uploading' : ''}`}>
+        <input 
+          type="file" 
+          id="file-upload"
+          onChange={handleFileUpload}
+          disabled={isUploading}
+        />
+        <label htmlFor="file-upload">
+          {isUploading ? (
+            <div className="upload-progress">
+              <p>Uploading... {uploadProgress}%</p>
+              <progress value={uploadProgress} max="100" />
+            </div>
+          ) : (
+            <div className="upload-prompt">
+              <p>Click or drag files to upload</p>
+              <small>Files will be stored in your protected S3 folder</small>
+            </div>
+          )}
+        </label>
       </div>
-      <button onClick={signOut}>Sign out</button>
-    </main>
+      
+      <div className="file-list-container">
+        <h2>Your Files ({files.length})</h2>
+        <FileTable 
+          files={files} 
+          onDelete={deleteFile} 
+          onView={getFileUrl} 
+        />
+      </div>
+    </div>
   );
 }
 
